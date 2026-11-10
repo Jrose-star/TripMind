@@ -15,7 +15,7 @@ body {
 }
 
 .container {
-  max-width: 640px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 48px 24px;
 }
@@ -57,9 +57,63 @@ button:disabled {
 
 .result {
   margin-top: 16px;
-  padding: 12px;
+  padding: 24px;
   background: #fff;
   border: 1px solid #e5e6eb;
   border-radius: 8px;
-  white-space: pre-wrap;
+}
+
+.result h1 {
+  font-size: 24px;
+  margin-top: 0;
+}
+
+.result h2 {
+  font-size: 20px;
+  margin-top: 28px;
+  border-bottom: 1px solid #e5e6eb;
+  padding-bottom: 8px;
+}
+
+.result h3 {
+  font-size: 17px;
+  margin-top: 20px;
+}
+
+.result table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0;
+}
+
+.result th,
+.result td {
+  border: 1px solid #e5e6eb;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.result th {
+  background: #f5f6f8;
+}
+
+.result blockquote {
+  margin: 16px 0;
+  padding: 8px 16px;
+  border-left: 3px solid #d0d3d9;
+  color: #8a8f99;
+  background: #f9fafb;
+}
+
+.result code {
+  background: #f5f6f8;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.result ul,
+.result ol {
+  padding-left: 24px;
 }

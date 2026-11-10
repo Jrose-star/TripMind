@@ -1,7 +1,7 @@
 """规划相关路由。
 
-本阶段为骨架版：提供 /plan 发起接口，内部调用编译好的 LangGraph。
-SSE 流式接口在核心 Agent 阶段接入。
+当前实现：同步调用 LangGraph，返回完整攻略（Markdown + JSON）。
+后续阶段：升级为 SSE 流式，边生成边推送。
 """
 
 import uuid
@@ -17,9 +17,21 @@ router = APIRouter()
 
 @router.post("/plan", response_model=PlanResponse)
 async def create_plan(req: PlanRequest):
-    """发起一次旅行规划，返回线程 ID。"""
+    """发起一次旅行规划，同步返回完整攻略。"""
     thread_id = req.thread_id or uuid.uuid4().hex
+
+    # 初始状态
     initial_state = AgentState(user_input=req.user_input)
-    # 骨架版：同步调用一次，验证图可运行；后续改为异步 + SSE
-    _ = app_graph.invoke(initial_state.model_dump())
-    return PlanResponse(thread_id=thread_id, status="completed")
+
+    # 调用 LangGraph，跑完 5 个节点，拿到最终状态
+    result = app_graph.invoke(initial_state.model_dump())
+
+    # 从最终状态中取回攻略
+    final_state = AgentState(**result)
+
+    return PlanResponse(
+        thread_id=thread_id,
+        status="completed",
+        guide_markdown=final_state.guide_markdown,
+        guide_json=final_state.guide_json,
+    )

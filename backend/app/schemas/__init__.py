@@ -1,5 +1,7 @@
 """API 请求/响应模型。"""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -11,10 +13,12 @@ class PlanRequest(BaseModel):
 
 
 class PlanResponse(BaseModel):
-    """规划发起响应。"""
+    """规划发起响应（包含完整攻略）。"""
 
     thread_id: str
     status: str
+    guide_markdown: str = ""
+    guide_json: dict = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
