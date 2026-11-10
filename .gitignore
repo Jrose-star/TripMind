@@ -10,3 +10,7 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# uv
+.python-version
+uv.lock
