@@ -53,3 +53,39 @@ def build_poi_user_prompt(requirement) -> str:
         f"偏好：{prefs}\n\n"
         f"请推荐符合上述需求的热门景点和美食，只输出 JSON 数组。"
     )
+
+
+GUIDE_WRITE_SYSTEM_PROMPT = """你是一位资深的旅行攻略作者。请根据给定的行程安排和预算信息，撰写一份专业、生动、实用的旅行攻略。
+
+要求：
+1. 使用 Markdown 格式输出。
+2. 结构包含：标题、行程概览、分天详细安排、费用明细、实用贴士。
+3. 语言自然、有温度，像真人游记，不要像冷冰冰的清单。
+4. 每天的安排要具体，包含景点介绍（一句话点睛）、时间节奏、美食推荐。
+5. 费用部分要清晰列出各项，并说明是"预估"。
+6. 结尾给出 2-3 条实用的旅行贴士（交通、天气、避坑等）。
+"""
+
+
+def build_guide_user_prompt(state) -> str:
+    """把结构化行程 + 预算转成给 LLM 的文本。"""
+    req = state.requirement
+    lines = []
+    lines.append(f"目的地：{req.destination if req else ''}")
+    lines.append(f"出行天数：{req.days if req else ''} 天")
+    lines.append(f"出行偏好：{'、'.join(req.preferences) if req and req.preferences else '无'}")
+    lines.append("")
+    lines.append("行程安排：")
+    for day in state.itinerary:
+        items = "、".join(f"{p.name}({p.category})" for p in day.items) if day.items else "自由活动"
+        lines.append(f"  第{day.day}天：{items}")
+    lines.append("")
+    if state.budget:
+        lines.append(f"目标预算：¥{state.budget.target_budget}")
+        lines.append(f"预估总费用：¥{state.budget.total_estimated}")
+        lines.append("费用明细：")
+        for k, v in state.budget.breakdown.items():
+            lines.append(f"  - {k}：¥{v}")
+    lines.append("")
+    lines.append("请据此撰写完整攻略。")
+    return "\n".join(lines)
