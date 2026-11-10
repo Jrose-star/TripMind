@@ -1,8 +1,13 @@
 """规划相关路由。
 
-包含两个接口：
-- POST /plan       同步接口：一次性返回完整攻略
-- POST /plan/stream 流式接口：SSE 逐节点推送进展 + 最终攻略
+接口：
+- POST /plan                     首次发起（同步），可能返回攻略或追问
+- POST /plan/stream              首次发起（SSE 流式），可能推送攻略或追问
+- POST /plan/{thread_id}/resume  用户回答追问后，恢复执行（同步）
+
+多轮追问基于 LangGraph 的 interrupt + checkpointer：
+1. clarify 节点信息不足时 interrupt 暂停，问题通过 __interrupt__ 抛回。
+2. 用户回答后，用 Command(resume=答案) + 同一 thread_id 恢复。
 """
 
 import json
@@ -10,10 +15,11 @@ import uuid
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from langgraph.types import Command
 
 from app.agents import app_graph
 from app.agents.state import AgentState
-from app.schemas import PlanRequest, PlanResponse
+from app.schemas import PlanRequest, PlanResponse, ResumeRequest
 
 router = APIRouter()
 
@@ -33,50 +39,164 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _extract_final(result: dict) -> tuple[str, dict]:
+    """从最终结果里提取攻略。
+
+    astream 的 chunk 结构是 {节点名: 更新内容}，例如
+    {"guide_write": {"guide_markdown": "...", "guide_json": {...}}}，
+    所以需要先从嵌套里取出 guide_write 的更新，再取字段。
+    同步 invoke 的最终结果则是平铺的完整状态，两种情况都要兼容。
+    """
+    guide_markdown = result.get("guide_markdown", "")
+    guide_json = result.get("guide_json", {})
+    if not guide_markdown:
+        # 兼容 astream 的 chunk 嵌套结构
+        node_update = result.get("guide_write") or {}
+        if isinstance(node_update, dict):
+            guide_markdown = node_update.get("guide_markdown", "")
+            guide_json = node_update.get("guide_json", {})
+    return guide_markdown, guide_json
+
+
+def _extract_interrupt(result) -> str | None:
+    """从结果里提取 interrupt 抛出的追问问题（若有）。"""
+    interrupts = result.get("__interrupt__")
+    if interrupts:
+        first = interrupts[0]
+        # interrupt 的 value 就是我们传入的问题字符串
+        return first.value if hasattr(first, "value") else str(first)
+    return None
+
+
 @router.post("/plan", response_model=PlanResponse)
 async def create_plan(req: PlanRequest):
-    """发起一次旅行规划，同步返回完整攻略。"""
+    """首次发起规划（同步）。可能返回攻略，也可能返回追问。"""
     thread_id = req.thread_id or uuid.uuid4().hex
     initial_state = AgentState(user_input=req.user_input)
-    result = app_graph.invoke(initial_state.model_dump())
-    final_state = AgentState(**result)
 
+    result = app_graph.invoke(
+        initial_state.model_dump(),
+        config={"configurable": {"thread_id": thread_id}},
+    )
+
+    # 检查是否被 interrupt 暂停（信息不足）
+    question = _extract_interrupt(result)
+    if question:
+        return PlanResponse(
+            thread_id=thread_id,
+            status="need_clarify",
+            guide_markdown="",
+            guide_json={"question": question},
+        )
+
+    guide_markdown, guide_json = _extract_final(result)
     return PlanResponse(
         thread_id=thread_id,
         status="completed",
-        guide_markdown=final_state.guide_markdown,
-        guide_json=final_state.guide_json,
+        guide_markdown=guide_markdown,
+        guide_json=guide_json,
+    )
+
+
+@router.post("/plan/{thread_id}/resume", response_model=PlanResponse)
+async def resume_plan(thread_id: str, req: ResumeRequest):
+    """用户回答追问后，恢复执行。"""
+    result = app_graph.invoke(
+        Command(resume=req.answer),
+        config={"configurable": {"thread_id": thread_id}},
+    )
+
+    question = _extract_interrupt(result)
+    if question:
+        return PlanResponse(
+            thread_id=thread_id,
+            status="need_clarify",
+            guide_markdown="",
+            guide_json={"question": question},
+        )
+
+    guide_markdown, guide_json = _extract_final(result)
+    return PlanResponse(
+        thread_id=thread_id,
+        status="completed",
+        guide_markdown=guide_markdown,
+        guide_json=guide_json,
     )
 
 
 @router.post("/plan/stream")
 async def create_plan_stream(req: PlanRequest):
-    """发起旅行规划，通过 SSE 流式推送进展与最终攻略。"""
+    """首次发起规划（SSE 流式）。逐节点推送进展，可能以追问或攻略结束。"""
     thread_id = req.thread_id or uuid.uuid4().hex
     initial_state = AgentState(user_input=req.user_input)
 
     async def event_generator():
-        # 第一条：开始
         yield _sse({"type": "start", "thread_id": thread_id})
 
-        # 逐节点流式执行
-        final_state = None
+        final_result = {}
         try:
-            async for chunk in app_graph.astream(initial_state.model_dump()):
-                # chunk 形如 {"node_name": {更新字段...}}
+            async for chunk in app_graph.astream(
+                initial_state.model_dump(),
+                config={"configurable": {"thread_id": thread_id}},
+            ):
+                # chunk 可能是节点更新，也可能携带 __interrupt__
+                if "__interrupt__" in chunk:
+                    question = _extract_interrupt(chunk)
+                    yield _sse(
+                        {"type": "clarify", "thread_id": thread_id, "question": question}
+                    )
+                    return
                 for node_name, _update in chunk.items():
                     status = NODE_STATUS_MAP.get(node_name, f"执行节点 {node_name}")
                     yield _sse({"type": "status", "node": node_name, "message": status})
-                # 保存最后一次状态
-                final_state = chunk
+                final_result = chunk
 
-            # 从最后状态里取攻略
-            guide_markdown = ""
-            guide_json = {}
-            if final_state and "guide_write" in final_state:
-                guide_markdown = final_state["guide_write"].get("guide_markdown", "")
-                guide_json = final_state["guide_write"].get("guide_json", {})
+            guide_markdown, guide_json = _extract_final(final_result)
+            yield _sse(
+                {
+                    "type": "done",
+                    "thread_id": thread_id,
+                    "guide_markdown": guide_markdown,
+                    "guide_json": guide_json,
+                }
+            )
+        except Exception as e:
+            yield _sse({"type": "error", "message": str(e)})
 
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/plan/{thread_id}/resume/stream")
+async def resume_plan_stream(thread_id: str, req: ResumeRequest):
+    """用户回答追问后，恢复执行（SSE 流式）。"""
+    async def event_generator():
+        yield _sse({"type": "start", "thread_id": thread_id})
+        final_result = {}
+        try:
+            async for chunk in app_graph.astream(
+                Command(resume=req.answer),
+                config={"configurable": {"thread_id": thread_id}},
+            ):
+                if "__interrupt__" in chunk:
+                    question = _extract_interrupt(chunk)
+                    yield _sse(
+                        {"type": "clarify", "thread_id": thread_id, "question": question}
+                    )
+                    return
+                for node_name, _update in chunk.items():
+                    status = NODE_STATUS_MAP.get(node_name, f"执行节点 {node_name}")
+                    yield _sse({"type": "status", "node": node_name, "message": status})
+                final_result = chunk
+
+            guide_markdown, guide_json = _extract_final(final_result)
             yield _sse(
                 {
                     "type": "done",

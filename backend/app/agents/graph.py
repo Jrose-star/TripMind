@@ -1,10 +1,11 @@
 """LangGraph 状态图定义：串联 5 个核心节点 + 条件路由。
 
-本阶段为骨架版：节点均为占位实现，但图结构完整、可编译、可运行，
-为后续接入真实逻辑提供清晰的结构基础。
+含内存 checkpointer，支持 interrupt 中断/恢复（多轮追问）。
 """
 
 from langgraph.graph import END, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.agents.nodes.budget_check import budget_check
 from app.agents.nodes.clarify import clarify
@@ -12,7 +13,24 @@ from app.agents.nodes.guide_write import guide_write
 from app.agents.nodes.intent_parse import intent_parse
 from app.agents.nodes.itinerary_plan import itinerary_plan
 from app.agents.nodes.poi_search import poi_search
-from app.agents.state import AgentState
+from app.agents.state import (
+    AgentState,
+    TravelRequirement,
+    POI,
+    DayPlan,
+    BudgetResult,
+)
+
+# 自定义序列化白名单：让 checkpointer 能安全地序列化/反序列化我们的 Pydantic 类型，
+# 消除 "Deserializing unregistered type" 警告。
+_CUSTOM_SERDE = JsonPlusSerializer(
+    allowed_msgpack_modules=[
+        ("app.agents.state", "TravelRequirement"),
+        ("app.agents.state", "POI"),
+        ("app.agents.state", "DayPlan"),
+        ("app.agents.state", "BudgetResult"),
+    ]
+)
 
 MAX_RETRY = 3
 
@@ -52,7 +70,8 @@ def build_graph():
         route_after_intent,
         {"clarify": "clarify", "poi_search": "poi_search"},
     )
-    graph.add_edge("clarify", END)  # 骨架版：追问后暂止，等待用户补充后重启
+    # 追问后回到意图解析，合并用户补充的信息重新解析
+    graph.add_edge("clarify", "intent_parse")
     graph.add_edge("poi_search", "itinerary_plan")
     graph.add_edge("itinerary_plan", "budget_check")
     graph.add_conditional_edges(
@@ -62,7 +81,10 @@ def build_graph():
     )
     graph.add_edge("guide_write", END)
 
-    return graph.compile()
+    # 用内存 checkpointer 支持中断/恢复（多轮追问）
+    # 传入自定义 serde，让自定义 Pydantic 类型能被安全序列化，消除警告
+    checkpointer = MemorySaver(serde=_CUSTOM_SERDE)
+    return graph.compile(checkpointer=checkpointer)
 
 
 # 供 API 层使用的编译实例

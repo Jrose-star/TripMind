@@ -6,11 +6,16 @@ function App() {
   const [result, setResult] = useState('')
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
+  const [question, setQuestion] = useState('')
+  const [threadId, setThreadId] = useState('')
+  const [answer, setAnswer] = useState('')
 
+  // 首次发起规划
   const handlePlan = async () => {
     if (!input.trim()) return
     setLoading(true)
     setResult('')
+    setQuestion('')
     setStatus('正在连接…')
 
     try {
@@ -19,52 +24,78 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_input: input }),
       })
-
-      if (!res.body) {
-        throw new Error('浏览器不支持流式读取')
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        // 按 SSE 的 \n\n 分割消息
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop() // 最后一段可能不完整，留到下次
-
-        for (const part of parts) {
-          const line = part.trim()
-          if (!line.startsWith('data:')) continue
-          const jsonStr = line.slice(5).trim()
-          try {
-            const msg = JSON.parse(jsonStr)
-            handleMessage(msg)
-          } catch (e) {
-            // 忽略解析失败的消息
-          }
-        }
-      }
+      await processStream(res)
     } catch (e) {
       setStatus('请求失败：' + e.message)
     } finally {
       setLoading(false)
-      setStatus('')
+    }
+  }
+
+  // 回答追问后恢复
+  const handleResume = async () => {
+    if (!answer.trim() || !threadId) return
+    setLoading(true)
+    setStatus('正在继续规划…')
+
+    try {
+      const res = await fetch(`/api/plan/${threadId}/resume/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answer }),
+      })
+      await processStream(res)
+    } catch (e) {
+      setStatus('请求失败：' + e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 处理 SSE 流
+  const processStream = async (res) => {
+    if (!res.body) throw new Error('浏览器不支持流式读取')
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const parts = buffer.split('\n\n')
+      buffer = parts.pop()
+
+      for (const part of parts) {
+        const line = part.trim()
+        if (!line.startsWith('data:')) continue
+        const jsonStr = line.slice(5).trim()
+        try {
+          handleMessage(JSON.parse(jsonStr))
+        } catch (e) {
+          // 忽略解析失败
+        }
+      }
     }
   }
 
   const handleMessage = (msg) => {
     switch (msg.type) {
+      case 'start':
+        setThreadId(msg.thread_id)
+        break
       case 'status':
         setStatus(msg.message)
+        break
+      case 'clarify':
+        setQuestion(msg.question)
+        setAnswer('')
+        setStatus('')
         break
       case 'done':
         setResult(msg.guide_markdown || '（未生成内容）')
         setStatus('完成')
+        setQuestion('')
         break
       case 'error':
         setStatus('出错：' + msg.message)
@@ -78,6 +109,7 @@ function App() {
     <div className="container">
       <h1>🧳 旅行规划 Agent</h1>
       <p className="subtitle">多智能体旅行规划（LangGraph + FastAPI + MCP）</p>
+
       <textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}
@@ -89,6 +121,21 @@ function App() {
       </button>
 
       {status && <div className="status">{status}</div>}
+
+      {question && (
+        <div className="clarify-box">
+          <p className="clarify-q">🤔 {question}</p>
+          <input
+            type="text"
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+            placeholder="请输入你的回答，例如：去成都，玩3天，预算2000"
+          />
+          <button onClick={handleResume} disabled={loading}>
+            {loading ? '继续规划中…' : '提交回答'}
+          </button>
+        </div>
+      )}
 
       {result && (
         <div className="result">

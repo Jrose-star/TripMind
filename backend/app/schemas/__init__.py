@@ -12,6 +12,12 @@ class PlanRequest(BaseModel):
     thread_id: str | None = Field(default=None, description="会话线程 ID，用于多轮续跑")
 
 
+class ResumeRequest(BaseModel):
+    """追问恢复请求。"""
+
+    answer: str = Field(..., description="用户对追问的回答")
+
+
 class PlanResponse(BaseModel):
     """规划发起响应（包含完整攻略）。"""
 

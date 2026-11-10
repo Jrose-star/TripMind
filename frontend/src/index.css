@@ -72,6 +72,32 @@ button:disabled {
   font-size: 14px;
 }
 
+.clarify-box {
+  margin-top: 16px;
+  padding: 16px;
+  background: #faf3e0;
+  border: 1px solid #f0d48a;
+  border-radius: 8px;
+}
+
+.clarify-q {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: #854f0b;
+}
+
+.clarify-box input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid #d0d3d9;
+  border-radius: 8px;
+}
+
+.clarify-box button {
+  margin-top: 10px;
+}
+
 .result h1 {
   font-size: 24px;
   margin-top: 0;

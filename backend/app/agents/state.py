@@ -59,5 +59,7 @@ class AgentState(BaseModel):
     # 控制字段
     retry_count: int = 0
     error: Optional[str] = None
+    # 多轮追问：用户对追问的回答（由 interrupt 恢复时注入）
+    follow_up_answer: Optional[str] = None
     # 元信息
     messages: list[dict[str, Any]] = Field(default_factory=list)
