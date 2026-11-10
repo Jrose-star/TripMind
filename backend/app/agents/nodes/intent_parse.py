@@ -67,11 +67,13 @@ def intent_parse(state: AgentState) -> dict:
     if llm is None:
         requirement = _merge_existing(state.requirement, None)
         requirement.missing_fields = _calc_missing(requirement)
-        return {"requirement": requirement}
+        # 清空追问答案，避免下次误用
+        return {"requirement": requirement, "follow_up_answer": None}
 
     # 构造解析输入：追问恢复时，合并已有需求 + 补充答案
     text = state.user_input
-    if state.follow_up_answer:
+    has_answer = bool(state.follow_up_answer)
+    if has_answer:
         existing = _format_existing(state.requirement)
         text = f"{state.user_input}\n已知信息：{existing}\n用户补充：{state.follow_up_answer}"
 
@@ -85,14 +87,15 @@ def intent_parse(state: AgentState) -> dict:
         content = resp.content if hasattr(resp, "content") else str(resp)
         data = _extract_json(content)
         # 追问恢复时，把新解析结果与已有需求合并
-        requirement = _merge_existing(state.requirement, data) if state.follow_up_answer else _build_requirement(data)
+        requirement = _merge_existing(state.requirement, data) if has_answer else _build_requirement(data)
         requirement.missing_fields = _calc_missing(requirement)
-        return {"requirement": requirement}
+        # 追问答案已消费，清空避免残留导致后续误判
+        return {"requirement": requirement, "follow_up_answer": None}
     except Exception:
         # 容错降级：任何异常都返回已有需求，不中断链路
         requirement = _merge_existing(state.requirement, None)
         requirement.missing_fields = _calc_missing(requirement)
-        return {"requirement": requirement}
+        return {"requirement": requirement, "follow_up_answer": None}
 
 
 def _format_existing(requirement) -> str:

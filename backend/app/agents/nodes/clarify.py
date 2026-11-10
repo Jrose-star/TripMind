@@ -25,8 +25,11 @@ def clarify(state: AgentState) -> dict:
     # 暂停图执行，把问题抛给用户；用户回答会作为 resume 值返回
     answer = interrupt(question)
 
-    # 恢复后，把用户回答存进状态，供重新解析使用
-    return {"follow_up_answer": answer}
+    # 恢复后，把用户回答存进状态，并递增追问轮次（用于防止无限追问）
+    return {
+        "follow_up_answer": answer,
+        "retry_count": state.retry_count + 1,
+    }
 
 
 def _build_question(missing: list[str]) -> str:

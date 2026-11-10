@@ -92,8 +92,21 @@ function App() {
         setAnswer('')
         setStatus('')
         break
+      case 'guide_start':
+        // 攻略正文开始流式输出，清空旧内容准备接收
+        setResult('')
+        break
+      case 'guide_token':
+        // 逐 token 追加攻略正文
+        setResult((prev) => prev + msg.token)
+        break
       case 'done':
-        setResult(msg.guide_markdown || '（未生成内容）')
+        // 流式完成，用最终完整攻略兜底（防止最后有 token 遗漏）
+        if (msg.guide_markdown) {
+          setResult(msg.guide_markdown)
+        } else if (!result) {
+          setResult('（未生成内容）')
+        }
         setStatus('完成')
         setQuestion('')
         break

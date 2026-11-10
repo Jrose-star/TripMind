@@ -1,8 +1,37 @@
 """攻略写作节点：把结构化行程 + 预算输出为 Markdown / JSON 双形态攻略。"""
 
+from typing import AsyncIterator
+
 from app.agents.nodes.prompts import GUIDE_WRITE_SYSTEM_PROMPT, build_guide_user_prompt
 from app.agents.state import AgentState
 from app.llm import get_llm
+
+
+async def astream_guide(state: AgentState) -> AsyncIterator[str]:
+    """流式生成攻略正文（token 级）。
+
+    供 API 层在跑完前序节点后调用，逐 token 产出 Markdown 攻略，
+    用于 SSE 流式推送给前端。
+    """
+    llm = get_llm()
+    if llm is None:
+        # 降级：LLM 不可用时，一次性产出模板攻略
+        yield _fallback_template(state)
+        return
+
+    try:
+        async for chunk in llm.astream(
+            [
+                ("system", GUIDE_WRITE_SYSTEM_PROMPT),
+                ("human", build_guide_user_prompt(state)),
+            ]
+        ):
+            text = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if text:
+                yield text
+    except Exception:
+        # 容错降级：流式失败时，产出模板攻略
+        yield _fallback_template(state)
 
 
 def _build_guide_json(state: AgentState) -> dict:

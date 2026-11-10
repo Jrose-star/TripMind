@@ -17,7 +17,8 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from langgraph.types import Command
 
-from app.agents import app_graph
+from app.agents import app_graph, planning_graph
+from app.agents.nodes.guide_write import astream_guide
 from app.agents.state import AgentState
 from app.schemas import PlanRequest, PlanResponse, ResumeRequest
 
@@ -126,20 +127,24 @@ async def resume_plan(thread_id: str, req: ResumeRequest):
 
 @router.post("/plan/stream")
 async def create_plan_stream(req: PlanRequest):
-    """首次发起规划（SSE 流式）。逐节点推送进展，可能以追问或攻略结束。"""
+    """首次发起规划（SSE 流式）。
+
+    前序节点（意图解析→检索→编排→校验）逐节点推送进度；
+    攻略正文用 astream_guide 逐 token 流式推送（token 级流式）。
+    """
     thread_id = req.thread_id or uuid.uuid4().hex
     initial_state = AgentState(user_input=req.user_input)
 
     async def event_generator():
         yield _sse({"type": "start", "thread_id": thread_id})
 
-        final_result = {}
         try:
-            async for chunk in app_graph.astream(
+            # 第一段：跑规划图（到 budget_check），逐节点推送进度
+            final_state = None
+            async for chunk in planning_graph.astream(
                 initial_state.model_dump(),
                 config={"configurable": {"thread_id": thread_id}},
             ):
-                # chunk 可能是节点更新，也可能携带 __interrupt__
                 if "__interrupt__" in chunk:
                     question = _extract_interrupt(chunk)
                     yield _sse(
@@ -149,15 +154,29 @@ async def create_plan_stream(req: PlanRequest):
                 for node_name, _update in chunk.items():
                     status = NODE_STATUS_MAP.get(node_name, f"执行节点 {node_name}")
                     yield _sse({"type": "status", "node": node_name, "message": status})
-                final_result = chunk
+                final_state = chunk
 
-            guide_markdown, guide_json = _extract_final(final_result)
+            if final_state is None:
+                yield _sse({"type": "error", "message": "规划未产出有效状态"})
+                return
+
+            state = AgentState(**final_state)
+
+            # 第二段：流式生成攻略正文
+            yield _sse({"type": "status", "node": "guide_write", "message": "正在撰写攻略…"})
+            yield _sse({"type": "guide_start"})
+            parts = []
+            async for token in astream_guide(state):
+                parts.append(token)
+                yield _sse({"type": "guide_token", "token": token})
+
+            full_markdown = "".join(parts)
             yield _sse(
                 {
                     "type": "done",
                     "thread_id": thread_id,
-                    "guide_markdown": guide_markdown,
-                    "guide_json": guide_json,
+                    "guide_markdown": full_markdown,
+                    "guide_json": {},
                 }
             )
         except Exception as e:
@@ -179,9 +198,10 @@ async def resume_plan_stream(thread_id: str, req: ResumeRequest):
     """用户回答追问后，恢复执行（SSE 流式）。"""
     async def event_generator():
         yield _sse({"type": "start", "thread_id": thread_id})
-        final_result = {}
+
         try:
-            async for chunk in app_graph.astream(
+            final_state = None
+            async for chunk in planning_graph.astream(
                 Command(resume=req.answer),
                 config={"configurable": {"thread_id": thread_id}},
             ):
@@ -194,15 +214,28 @@ async def resume_plan_stream(thread_id: str, req: ResumeRequest):
                 for node_name, _update in chunk.items():
                     status = NODE_STATUS_MAP.get(node_name, f"执行节点 {node_name}")
                     yield _sse({"type": "status", "node": node_name, "message": status})
-                final_result = chunk
+                final_state = chunk
 
-            guide_markdown, guide_json = _extract_final(final_result)
+            if final_state is None:
+                yield _sse({"type": "error", "message": "规划未产出有效状态"})
+                return
+
+            state = AgentState(**final_state)
+
+            yield _sse({"type": "status", "node": "guide_write", "message": "正在撰写攻略…"})
+            yield _sse({"type": "guide_start"})
+            parts = []
+            async for token in astream_guide(state):
+                parts.append(token)
+                yield _sse({"type": "guide_token", "token": token})
+
+            full_markdown = "".join(parts)
             yield _sse(
                 {
                     "type": "done",
                     "thread_id": thread_id,
-                    "guide_markdown": guide_markdown,
-                    "guide_json": guide_json,
+                    "guide_markdown": full_markdown,
+                    "guide_json": {},
                 }
             )
         except Exception as e:
