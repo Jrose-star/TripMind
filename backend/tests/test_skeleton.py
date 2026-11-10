@@ -5,10 +5,17 @@ from app.agents.state import AgentState
 
 
 def test_graph_compiles_and_runs():
-    """图能编译并跑通完整链路（含占位节点）。"""
+    """图能编译并跑通完整链路。
+
+    由于 app_graph 挂了 checkpointer（支持多轮追问），invoke 必须传 thread_id。
+    链路结果：intent_parse → (信息不足) → clarify → 回到 intent_parse，
+    最多追问 MAX_CLARIFY_ROUNDS 次后强制进入 poi_search。
+    """
     state = AgentState(user_input="武汉出发 3 天 预算 3000 江景")
-    result = app_graph.invoke(state.model_dump())
-    # 骨架版：intent_parse 会标记缺失字段 → 路由到 clarify → END
+    result = app_graph.invoke(
+        state.model_dump(),
+        config={"configurable": {"thread_id": "test-thread"}},
+    )
     assert result is not None
     assert "messages" in result
 
