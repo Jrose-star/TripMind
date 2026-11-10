@@ -63,6 +63,15 @@ button:disabled {
   border-radius: 8px;
 }
 
+.status {
+  margin-top: 16px;
+  padding: 10px 16px;
+  background: #e6f1fb;
+  color: #185fa5;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
 .result h1 {
   font-size: 24px;
   margin-top: 0;
