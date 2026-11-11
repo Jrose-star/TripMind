@@ -46,6 +46,30 @@ class BudgetResult(BaseModel):
     breakdown: dict[str, float] = Field(default_factory=dict)
 
 
+class WeatherCast(BaseModel):
+    """某一天的天气预报。"""
+
+    date: str = ""
+    week: str = ""
+    day_weather: str = ""
+    night_weather: str = ""
+    day_temp: str = ""
+    night_temp: str = ""
+    day_wind: str = ""
+    night_wind: str = ""
+    day_power: str = ""
+    night_power: str = ""
+
+
+class WeatherInfo(BaseModel):
+    """目的地天气预报（未来数天）。"""
+
+    city: str = ""
+    province: str = ""
+    report_time: str = ""
+    casts: list[WeatherCast] = Field(default_factory=list)
+
+
 class AgentState(BaseModel):
     """LangGraph 共享状态（可序列化，支持 checkpointer 持久化）。"""
 
@@ -54,6 +78,7 @@ class AgentState(BaseModel):
     pois: list[POI] = Field(default_factory=list)
     itinerary: list[DayPlan] = Field(default_factory=list)
     budget: Optional[BudgetResult] = None
+    weather: Optional[WeatherInfo] = None
     guide_markdown: str = ""
     guide_json: dict[str, Any] = Field(default_factory=dict)
     # 控制字段

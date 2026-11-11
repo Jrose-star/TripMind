@@ -40,6 +40,7 @@ def _build_guide_json(state: AgentState) -> dict:
         "destination": state.requirement.destination if state.requirement else "",
         "days": state.requirement.days if state.requirement else None,
         "budget": state.budget.model_dump() if state.budget else None,
+        "weather": state.weather.model_dump() if state.weather else None,
         "itinerary": [day.model_dump() for day in state.itinerary],
     }
 
@@ -91,6 +92,14 @@ def _fallback_template(state: AgentState) -> str:
                 lines.append(f"- {p.name}（{p.category}，约 {p.estimated_duration} 小时）")
         else:
             lines.append("- 自由活动 / 休息调整")
+        lines.append("")
+    if state.weather and state.weather.casts:
+        lines.append("## 天气预报")
+        for c in state.weather.casts:
+            lines.append(
+                f"- {c.date}：白天{c.day_weather} {c.day_temp}°C，"
+                f"夜间{c.night_weather} {c.night_temp}°C"
+            )
         lines.append("")
     if state.budget:
         lines.append("## 费用预估")

@@ -1,12 +1,11 @@
 """MCP Server：把高德地图 / 天气等外部服务封装为 MCP 工具。
 
 本文件是一个标准的 MCP Server（stdio 传输），对外暴露统一工具接口。
-后端 POI 检索节点目前走进程内 AmapClient（等价实现），
-本 Server 用于未来真正的 MCP 协议接入 / 独立部署。
+后端节点通过 MCP 协议（langchain-mcp-adapters 客户端）调用这里的工具。
 
 工具：
 - search_poi：高德 POI 检索
-- get_weather：天气查询（占位）
+- get_weather：高德天气查询（真实数据）
 """
 
 import asyncio
@@ -132,6 +131,62 @@ async def _search_amap(city: str, keywords: str) -> str:
     return json.dumps(pois, ensure_ascii=False)
 
 
+async def _get_weather_amap(city: str) -> str:
+    """调用高德天气 API，返回标准化的 JSON 文本。
+
+    接口：https://restapi.amap.com/v3/weather/weatherInfo
+    返回城市 + 未来几天天气预报（天气现象、温度、风向、湿度等）。
+    """
+    api_key = _get_api_key()
+    if not api_key:
+        return "[]"
+
+    import httpx
+
+    params = {
+        "key": api_key,
+        "city": city,
+        "extensions": "all",  # all=预报（未来3天）；base=实时
+    }
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            "https://restapi.amap.com/v3/weather/weatherInfo", params=params
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    if data.get("status") != "1":
+        return "[]"
+
+    forecasts = data.get("forecasts", [])
+    if not forecasts:
+        return "[]"
+
+    # 取第一个城市（传入城市名时通常只有一个匹配结果）
+    city_info = forecasts[0]
+    result = {
+        "city": city_info.get("city", city),
+        "province": city_info.get("province", ""),
+        "report_time": city_info.get("reporttime", ""),
+        "casts": [],  # 未来几天的天气预报
+    }
+    for c in city_info.get("casts", []):
+        result["casts"].append(
+            {
+                "date": c.get("date", ""),
+                "week": c.get("week", ""),
+                "day_weather": c.get("dayweather", ""),
+                "night_weather": c.get("nightweather", ""),
+                "day_temp": c.get("daytemp", ""),
+                "night_temp": c.get("nighttemp", ""),
+                "day_wind": c.get("daywind", ""),
+                "night_wind": c.get("nightwind", ""),
+                "day_power": c.get("daypower", ""),
+                "night_power": c.get("nightpower", ""),
+            }
+        )
+    return json.dumps(result, ensure_ascii=False)
+
+
 @app.list_tools()
 async def list_tools():
     """列出可用工具。"""
@@ -150,10 +205,10 @@ async def list_tools():
         ),
         Tool(
             name="get_weather",
-            description="查询天气（占位，待接天气 API）",
+            description="通过高德查询指定城市的天气预报（未来几天，含天气现象、温度、风力）",
             inputSchema={
                 "type": "object",
-                "properties": {"city": {"type": "string"}},
+                "properties": {"city": {"type": "string", "description": "城市名，如「武汉」"}},
                 "required": ["city"],
             },
         ),
@@ -169,7 +224,9 @@ async def call_tool(name: str, arguments: dict):
         text = await _search_amap(city, keywords)
         return {"content": [{"type": "text", "text": text}]}
     if name == "get_weather":
-        return {"content": [{"type": "text", "text": f"占位天气结果: {arguments.get('city', '')}"}]}
+        city = arguments.get("city", "")
+        text = await _get_weather_amap(city)
+        return {"content": [{"type": "text", "text": text}]}
     raise ValueError(f"未知工具: {name}")
 
 

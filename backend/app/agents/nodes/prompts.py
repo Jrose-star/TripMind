@@ -64,11 +64,12 @@ GUIDE_WRITE_SYSTEM_PROMPT = """你是一位资深的旅行攻略作者。请根�
 4. 每天的安排要具体，包含景点介绍（一句话点睛）、时间节奏、美食推荐。
 5. 费用部分要清晰列出各项，并说明是"预估"。
 6. 结尾给出 2-3 条实用的旅行贴士（交通、天气、避坑等）。
+7. 若提供了天气预报，务必在贴士中给出对应的穿衣、携带雨具/防晒等建议。
 """
 
 
 def build_guide_user_prompt(state) -> str:
-    """把结构化行程 + 预算转成给 LLM 的文本。"""
+    """把结构化行程 + 预算 + 天气转成给 LLM 的文本。"""
     req = state.requirement
     lines = []
     lines.append(f"目的地：{req.destination if req else ''}")
@@ -80,6 +81,14 @@ def build_guide_user_prompt(state) -> str:
         items = "、".join(f"{p.name}({p.category})" for p in day.items) if day.items else "自由活动"
         lines.append(f"  第{day.day}天：{items}")
     lines.append("")
+    if state.weather and state.weather.casts:
+        lines.append("天气预报（未来几天）：")
+        for c in state.weather.casts:
+            lines.append(
+                f"  {c.date}：白天{c.day_weather} {c.day_temp}°C，"
+                f"夜间{c.night_weather} {c.night_temp}°C"
+            )
+        lines.append("")
     if state.budget:
         lines.append(f"目标预算：¥{state.budget.target_budget}")
         lines.append(f"预估总费用：¥{state.budget.total_estimated}")
@@ -87,5 +96,5 @@ def build_guide_user_prompt(state) -> str:
         for k, v in state.budget.breakdown.items():
             lines.append(f"  - {k}：¥{v}")
     lines.append("")
-    lines.append("请据此撰写完整攻略。")
+    lines.append("请据此撰写完整攻略（若提供了天气预报，请在贴士中给出相应的穿衣/携带建议）。")
     return "\n".join(lines)

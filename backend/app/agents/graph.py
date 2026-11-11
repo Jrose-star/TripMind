@@ -13,12 +13,15 @@ from app.agents.nodes.guide_write import guide_write
 from app.agents.nodes.intent_parse import intent_parse
 from app.agents.nodes.itinerary_plan import itinerary_plan
 from app.agents.nodes.poi_search import poi_search
+from app.agents.nodes.weather import weather_search
 from app.agents.state import (
     AgentState,
     TravelRequirement,
     POI,
     DayPlan,
     BudgetResult,
+    WeatherInfo,
+    WeatherCast,
 )
 
 # 自定义序列化白名单：让 checkpointer 能安全地序列化/反序列化我们的 Pydantic 类型，
@@ -29,6 +32,8 @@ _CUSTOM_SERDE = JsonPlusSerializer(
         ("app.agents.state", "POI"),
         ("app.agents.state", "DayPlan"),
         ("app.agents.state", "BudgetResult"),
+        ("app.agents.state", "WeatherInfo"),
+        ("app.agents.state", "WeatherCast"),
     ]
 )
 
@@ -68,6 +73,7 @@ def build_graph():
     graph.add_node("intent_parse", intent_parse)
     graph.add_node("clarify", clarify)
     graph.add_node("poi_search", poi_search)
+    graph.add_node("weather", weather_search)
     graph.add_node("itinerary_plan", itinerary_plan)
     graph.add_node("budget_check", budget_check)
     graph.add_node("guide_write", guide_write)
@@ -83,7 +89,8 @@ def build_graph():
     )
     # 追问后回到意图解析，合并用户补充的信息重新解析
     graph.add_edge("clarify", "intent_parse")
-    graph.add_edge("poi_search", "itinerary_plan")
+    graph.add_edge("poi_search", "weather")
+    graph.add_edge("weather", "itinerary_plan")
     graph.add_edge("itinerary_plan", "budget_check")
     graph.add_conditional_edges(
         "budget_check",
@@ -109,6 +116,7 @@ def build_planning_graph():
     graph.add_node("intent_parse", intent_parse)
     graph.add_node("clarify", clarify)
     graph.add_node("poi_search", poi_search)
+    graph.add_node("weather", weather_search)
     graph.add_node("itinerary_plan", itinerary_plan)
     graph.add_node("budget_check", budget_check)
 
@@ -120,7 +128,8 @@ def build_planning_graph():
         {"clarify": "clarify", "poi_search": "poi_search"},
     )
     graph.add_edge("clarify", "intent_parse")
-    graph.add_edge("poi_search", "itinerary_plan")
+    graph.add_edge("poi_search", "weather")
+    graph.add_edge("weather", "itinerary_plan")
     graph.add_edge("itinerary_plan", "budget_check")
     graph.add_edge("budget_check", END)
 

@@ -154,7 +154,9 @@ def _unwrap(node: Any, depth: int) -> list[dict[str, Any]]:
                 parsed = _unwrap(node[key], depth + 1)
                 if parsed:
                     return parsed
-        return []
+        # 既不是 POI，也不是已知包装层 → 把它本身当作业务数据对象返回
+        # （如天气结果 {"city":..., "casts":[...]}）
+        return [node]
 
     return []
 
