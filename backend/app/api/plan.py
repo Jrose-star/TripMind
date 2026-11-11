@@ -176,8 +176,10 @@ async def create_plan_stream(req: PlanRequest):
         yield _sse({"type": "start", "thread_id": thread_id})
 
         try:
-            # 第一段：跑规划图（到 budget_check），逐节点推送进度
-            final_state = None
+            # 第一段：跑规划图（到 budget_check），逐节点推送进度。
+            # 注意：astream 的每个 chunk 是「单节点增量更新」，不是完整状态，
+            # 所以需要手动累积各节点的更新，最后合并成完整 state。
+            accumulated: dict = {}
             async for chunk in planning_graph.astream(
                 initial_state.model_dump(),
                 config={"configurable": {"thread_id": thread_id}},
@@ -188,16 +190,13 @@ async def create_plan_stream(req: PlanRequest):
                         {"type": "clarify", "thread_id": thread_id, "question": question}
                     )
                     return
-                for node_name, _update in chunk.items():
+                for node_name, update in chunk.items():
                     status = NODE_STATUS_MAP.get(node_name, f"执行节点 {node_name}")
                     yield _sse({"type": "status", "node": node_name, "message": status})
-                final_state = chunk
+                    if isinstance(update, dict):
+                        accumulated.update(update)
 
-            if final_state is None:
-                yield _sse({"type": "error", "message": "规划未产出有效状态"})
-                return
-
-            state = AgentState(**final_state)
+            state = AgentState(**accumulated)
 
             # 第二段：流式生成攻略正文
             yield _sse({"type": "status", "node": "guide_write", "message": "正在撰写攻略…"})
@@ -237,7 +236,7 @@ async def resume_plan_stream(thread_id: str, req: ResumeRequest):
         yield _sse({"type": "start", "thread_id": thread_id})
 
         try:
-            final_state = None
+            accumulated: dict = {}
             async for chunk in planning_graph.astream(
                 Command(resume=req.answer),
                 config={"configurable": {"thread_id": thread_id}},
@@ -248,16 +247,13 @@ async def resume_plan_stream(thread_id: str, req: ResumeRequest):
                         {"type": "clarify", "thread_id": thread_id, "question": question}
                     )
                     return
-                for node_name, _update in chunk.items():
+                for node_name, update in chunk.items():
                     status = NODE_STATUS_MAP.get(node_name, f"执行节点 {node_name}")
                     yield _sse({"type": "status", "node": node_name, "message": status})
-                final_state = chunk
+                    if isinstance(update, dict):
+                        accumulated.update(update)
 
-            if final_state is None:
-                yield _sse({"type": "error", "message": "规划未产出有效状态"})
-                return
-
-            state = AgentState(**final_state)
+            state = AgentState(**accumulated)
 
             yield _sse({"type": "status", "node": "guide_write", "message": "正在撰写攻略…"})
             yield _sse({"type": "guide_start"})

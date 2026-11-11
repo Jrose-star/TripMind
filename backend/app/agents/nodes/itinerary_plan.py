@@ -27,6 +27,10 @@ def itinerary_plan(state: AgentState) -> dict:
     day_index = 1
 
     for poi in sorted_pois:
+        # 天数约束：行程最多只编排到第 days 天，超出就不再塞入
+        # （POI 检索通常返回远多于天数能容纳的数量，需按天数截断）
+        if day_index > days:
+            break
         # 如果当天塞不下（超过每日上限）且已有内容，换下一天
         if current_items and current_hours + poi.estimated_duration > DAILY_HOURS:
             itinerary.append(
@@ -35,11 +39,14 @@ def itinerary_plan(state: AgentState) -> dict:
             day_index += 1
             current_items = []
             current_hours = 0.0
+        # 换天后若已超过天数上限，停止塞入
+        if day_index > days:
+            break
         current_items.append(poi)
         current_hours += poi.estimated_duration
 
     # 收尾：最后一天
-    if current_items:
+    if current_items and day_index <= days:
         itinerary.append(DayPlan(day=day_index, items=current_items, note=f"第 {day_index} 天"))
 
     # 若 POI 不足填满天数，补充"自由活动"占位天
