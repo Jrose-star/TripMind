@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 
 function App() {
@@ -9,6 +9,43 @@ function App() {
   const [question, setQuestion] = useState('')
   const [threadId, setThreadId] = useState('')
   const [answer, setAnswer] = useState('')
+  const [history, setHistory] = useState([])
+  const [showHistory, setShowHistory] = useState(false)
+
+  // 加载历史会话列表
+  const loadHistory = async () => {
+    try {
+      const res = await fetch('/api/history')
+      const data = await res.json()
+      setHistory(data.items || [])
+      setShowHistory(true)
+    } catch (e) {
+      setStatus('加载历史失败：' + e.message)
+    }
+  }
+
+  // 查看某次历史会话的完整攻略
+  const viewHistory = async (tid) => {
+    setStatus('正在加载历史攻略…')
+    try {
+      const res = await fetch(`/api/plan/${tid}`)
+      if (!res.ok) throw new Error('未找到该会话')
+      const data = await res.json()
+      setResult(data.guide_markdown || '（该会话无攻略内容）')
+      setThreadId(tid)
+      setStatus('已加载历史攻略')
+    } catch (e) {
+      setStatus('加载失败：' + e.message)
+    }
+  }
+
+  // 复用历史需求：把历史输入回填到输入框
+  const reuseHistory = (userInput) => {
+    setInput(userInput)
+    setShowHistory(false)
+    setResult('')
+    setStatus('已回填历史需求，可修改后重新规划')
+  }
 
   // 首次发起规划
   const handlePlan = async () => {
@@ -132,8 +169,53 @@ function App() {
       <button onClick={handlePlan} disabled={loading}>
         {loading ? '规划中…' : '开始规划'}
       </button>
+      <button onClick={loadHistory} disabled={loading} className="secondary-btn">
+        历史记录
+      </button>
 
       {status && <div className="status">{status}</div>}
+
+      {showHistory && (
+        <div className="history-panel">
+          <div className="history-header">
+            <h2>📋 历史规划</h2>
+            <button onClick={() => setShowHistory(false)} className="close-btn">
+              收起
+            </button>
+          </div>
+          {history.length === 0 ? (
+            <p className="history-empty">暂无历史记录，先去规划一次吧～</p>
+          ) : (
+            <ul className="history-list">
+              {history.map((item) => (
+                <li key={item.thread_id} className="history-item">
+                  <div className="history-info">
+                    <div className="history-input">{item.user_input}</div>
+                    <div className="history-meta">
+                      {item.destination && <span>📍 {item.destination}</span>}
+                      {item.days && <span>📅 {item.days} 天</span>}
+                      {item.budget != null && <span>💰 ¥{item.budget}</span>}
+                      <span className="history-time">
+                        {new Date(item.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="history-actions">
+                    {item.has_result && (
+                      <button onClick={() => viewHistory(item.thread_id)} className="mini-btn">
+                        查看攻略
+                      </button>
+                    )}
+                    <button onClick={() => reuseHistory(item.user_input)} className="mini-btn">
+                      复用
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {question && (
         <div className="clarify-box">

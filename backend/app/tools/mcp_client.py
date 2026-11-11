@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -173,6 +174,31 @@ async def acall_mcp_tool(name: str, **kwargs: Any) -> list[dict[str, Any]]:
 def call_mcp_tool(name: str, **kwargs: Any) -> list[dict[str, Any]]:
     """模块级便捷入口：同步调用 MCP 工具。
 
-    供同步节点使用（内部用 asyncio.run 包装）。
+    供同步节点使用。兼容两种调用上下文：
+    - 无事件循环（普通脚本 / 同步 invoke）→ 直接 asyncio.run
+    - 已有运行中的事件循环（FastAPI async 端点内）→ 在新线程里跑 asyncio.run，
+      避免 "cannot be called from a running event loop" 报错
     """
-    return asyncio.run(acall_mcp_tool(name, **kwargs))
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # 无运行中的事件循环
+        return asyncio.run(acall_mcp_tool(name, **kwargs))
+
+    # 已有运行中的事件循环：用独立线程跑，避免冲突
+    result: list[dict[str, Any]] = []
+    error: BaseException | None = None
+
+    def _runner() -> None:
+        nonlocal result, error
+        try:
+            result = asyncio.run(acall_mcp_tool(name, **kwargs))
+        except BaseException as e:  # noqa: BLE001
+            error = e
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if error is not None:
+        raise error
+    return result

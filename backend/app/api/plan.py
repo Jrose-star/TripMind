@@ -20,6 +20,7 @@ from langgraph.types import Command
 from app.agents import app_graph, planning_graph
 from app.agents.nodes.guide_write import astream_guide
 from app.agents.state import AgentState
+from app.db import storage
 from app.schemas import PlanRequest, PlanResponse, ResumeRequest
 
 router = APIRouter()
@@ -69,6 +70,39 @@ def _extract_interrupt(result) -> str | None:
     return None
 
 
+async def _persist_result(thread_id: str, user_input: str, result: dict) -> None:
+    """把一次完成的规划结果落库（数据库不可用时静默跳过）。"""
+    guide_markdown, guide_json = _extract_final(result)
+    req = result.get("requirement")
+    destination = req.destination if req else None
+    days = req.days if req else None
+    budget = req.budget if req else None
+
+    itinerary = [d.model_dump() for d in result.get("itinerary", [])]
+    budget_result = result.get("budget")
+    weather = result.get("weather")
+
+    session_id = await storage.save_session(
+        thread_id=thread_id,
+        user_input=user_input,
+        destination=destination,
+        days=days,
+        budget=budget,
+        status="completed",
+    )
+    if session_id is not None:
+        await storage.save_result(
+            session_id=session_id,
+            thread_id=thread_id,
+            destination=destination,
+            itinerary=itinerary,
+            budget=budget_result.model_dump() if budget_result else None,
+            weather=weather.model_dump() if weather else None,
+            guide_markdown=guide_markdown,
+            guide_json=guide_json,
+        )
+
+
 @router.post("/plan", response_model=PlanResponse)
 async def create_plan(req: PlanRequest):
     """首次发起规划（同步）。可能返回攻略，也可能返回追问。"""
@@ -91,6 +125,7 @@ async def create_plan(req: PlanRequest):
         )
 
     guide_markdown, guide_json = _extract_final(result)
+    await _persist_result(thread_id, req.user_input, result)
     return PlanResponse(
         thread_id=thread_id,
         status="completed",
@@ -117,6 +152,8 @@ async def resume_plan(thread_id: str, req: ResumeRequest):
         )
 
     guide_markdown, guide_json = _extract_final(result)
+    # 恢复完成后，把用户原始输入也一并落库（从结果里取不到原始输入，用恢复上下文）
+    await _persist_result(thread_id, thread_id, result)
     return PlanResponse(
         thread_id=thread_id,
         status="completed",

@@ -32,3 +32,35 @@ class HealthResponse(BaseModel):
 
     status: str
     version: str
+
+
+class HistoryItem(BaseModel):
+    """历史会话列表项。"""
+
+    thread_id: str
+    user_input: str
+    destination: str | None = None
+    days: int | None = None
+    budget: float | None = None
+    status: str = "completed"
+    created_at: str = ""
+    has_result: bool = False
+
+
+class HistoryListResponse(BaseModel):
+    """历史会话列表响应。"""
+
+    items: list[HistoryItem] = Field(default_factory=list)
+
+
+class PlanResultResponse(BaseModel):
+    """某次会话完整结果响应。"""
+
+    thread_id: str
+    user_input: str = ""
+    destination: str | None = None
+    itinerary: list = Field(default_factory=list)
+    budget: dict | None = None
+    weather: dict | None = None
+    guide_markdown: str = ""
+    guide_json: dict | None = None
