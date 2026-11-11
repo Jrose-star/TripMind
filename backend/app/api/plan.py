@@ -111,7 +111,10 @@ async def create_plan(req: PlanRequest):
 
     result = app_graph.invoke(
         initial_state.model_dump(),
-        config={"configurable": {"thread_id": thread_id}},
+        config={
+            "configurable": {"thread_id": thread_id},
+            "metadata": {"thread_id": thread_id, "user_input": req.user_input},
+        },
     )
 
     # 检查是否被 interrupt 暂停（信息不足）
@@ -139,7 +142,10 @@ async def resume_plan(thread_id: str, req: ResumeRequest):
     """用户回答追问后，恢复执行。"""
     result = app_graph.invoke(
         Command(resume=req.answer),
-        config={"configurable": {"thread_id": thread_id}},
+        config={
+            "configurable": {"thread_id": thread_id},
+            "metadata": {"thread_id": thread_id, "answer": req.answer},
+        },
     )
 
     question = _extract_interrupt(result)
@@ -182,7 +188,10 @@ async def create_plan_stream(req: PlanRequest):
             accumulated: dict = {}
             async for chunk in planning_graph.astream(
                 initial_state.model_dump(),
-                config={"configurable": {"thread_id": thread_id}},
+                config={
+                    "configurable": {"thread_id": thread_id},
+                    "metadata": {"thread_id": thread_id, "user_input": req.user_input},
+                },
             ):
                 if "__interrupt__" in chunk:
                     question = _extract_interrupt(chunk)
@@ -239,7 +248,10 @@ async def resume_plan_stream(thread_id: str, req: ResumeRequest):
             accumulated: dict = {}
             async for chunk in planning_graph.astream(
                 Command(resume=req.answer),
-                config={"configurable": {"thread_id": thread_id}},
+                config={
+                    "configurable": {"thread_id": thread_id},
+                    "metadata": {"thread_id": thread_id, "answer": req.answer},
+                },
             ):
                 if "__interrupt__" in chunk:
                     question = _extract_interrupt(chunk)
