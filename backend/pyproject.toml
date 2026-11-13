@@ -1,5 +1,5 @@
 [project]
-name = "travel-agent"
+name = "tripmind"
 version = "0.1.0"
 description = "多智能体旅行规划 Agent（LangGraph + FastAPI + MCP）"
 requires-python = ">=3.11"

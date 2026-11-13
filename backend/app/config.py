@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # 可观测
     langsmith_api_key: str = ""
-    langsmith_project: str = "travel-agent"
+    langsmith_project: str = "tripmind"
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
 

@@ -77,7 +77,7 @@ class MCPToolClient:
                 return
             try:
                 self._client = MultiServerMCPClient(
-                    connections={"travel-agent": _build_connection()}
+                    connections={"tripmind": _build_connection()}
                 )
                 tools = await self._client.get_tools()
                 self._tools = {t.name: t for t in tools}

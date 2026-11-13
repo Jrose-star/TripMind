@@ -200,7 +200,7 @@ function App() {
         <div className="brand">
           <span className="brand-logo">🧳</span>
           <div>
-            <div className="brand-title">旅行规划 Agent</div>
+            <div className="brand-title">TripMind · 旅行规划</div>
             <div className="brand-sub">LangGraph · FastAPI · MCP</div>
           </div>
         </div>

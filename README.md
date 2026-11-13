@@ -1,4 +1,4 @@
-# 多智能体旅行规划 Agent
+# TripMind · 多智能体旅行规划 Agent
 
 基于 LangGraph + FastAPI + MCP 的旅行规划写作 Agent，支持意图解析、POI 检索、行程编排、预算校验、攻略写作输出。
 

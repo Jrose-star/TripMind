@@ -25,5 +25,5 @@ def setup_observability() -> None:
         return
 
     os.environ.setdefault("LANGSMITH_API_KEY", settings.langsmith_api_key)
-    os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project or "travel-agent")
+    os.environ.setdefault("LANGSMITH_PROJECT", settings.langsmith_project or "tripmind")
     os.environ.setdefault("LANGSMITH_TRACING", "true")

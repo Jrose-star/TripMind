@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     await close_pool()
 
 
-app = FastAPI(title="旅行规划 Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="TripMind · 旅行规划 Agent", version="0.1.0", lifespan=lifespan)
 
 # 允许前端跨域访问
 app.add_middleware(

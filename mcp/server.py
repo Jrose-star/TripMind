@@ -17,7 +17,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
-app = Server("travel-agent-mcp")
+app = Server("tripmind-mcp")
 
 
 def _get_api_key() -> str:
