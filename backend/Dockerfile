@@ -1,7 +1,11 @@
 # ===== 后端镜像：FastAPI + LangGraph + MCP（uv 构建）=====
 
 # ---------- 阶段一：构建依赖 ----------
-FROM ghcr.io/astral-sh/uv:0.5.11 AS builder
+# 用官方 Python 镜像（docker hub 上有加速），再装 uv，避免拉取 ghcr 上的 uv 镜像
+FROM python:3.11-slim AS builder
+
+# 安装 uv（走国内 pip 镜像，速度快）
+RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ uv==0.5.11
 
 # 让 uv 使用国内镜像源，加速依赖下载
 ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
@@ -12,9 +16,11 @@ WORKDIR /app
 # 依赖不变时，重新构建不会重复下载安装
 COPY pyproject.toml uv.lock ./
 
-# 用 uv sync 安装依赖到 /app/.venv
-# --frozen 严格按 uv.lock 锁定版本；--no-dev 不装 dev 依赖（pytest/ruff 等）
-RUN uv sync --frozen --no-dev --no-install-project
+# 创建虚拟环境，并用 uv pip 安装依赖（不安装项目本身）
+# uv pip install -r pyproject.toml 会安装 [project.dependencies] 里的依赖，
+# 不会去找根包，正好匹配 package=false 的项目
+RUN uv venv /app/.venv \
+    && uv pip install --python /app/.venv/bin/python -r pyproject.toml
 
 # ---------- 阶段二：运行镜像 ----------
 FROM python:3.11-slim
