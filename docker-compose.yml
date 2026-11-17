@@ -1,0 +1,72 @@
+# ===== TripMind 一键编排：前端(nginx) + 后端 + PostgreSQL + Redis =====
+# 用法：在项目根目录执行  docker compose up -d --build
+
+services:
+  # ---------- 前端（nginx 托管静态文件 + /api 反代）----------
+  frontend:
+    build:
+      context: ./frontend
+    container_name: tripmind-frontend
+    ports:
+      - "80:80"          # 宿主 80 端口 → 容器 80，浏览器直接访问 http://虚拟机IP
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ---------- 后端（FastAPI + LangGraph + MCP）----------
+  backend:
+    build:
+      context: ./backend
+    container_name: tripmind-backend
+    ports:
+      - "8000:8000"      # 可选：直接暴露后端端口，方便调试
+    environment:
+      # 从项目根目录的 .env 文件读取（你需要自己创建，见部署说明）
+      # 这里显式覆盖 HOST，确保容器内监听 0.0.0.0
+      HOST: 0.0.0.0
+      PORT: 8000
+      # 数据层地址指向 compose 里的服务名
+      POSTGRES_DSN: postgresql://travel_agent:${POSTGRES_PASSWORD:-travel_agent_pass}@postgres:5432/travel_agent
+      REDIS_URL: redis://redis:6379/0
+      # LLM / MCP / 可观测 等其余配置从 env_file 注入
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # ---------- PostgreSQL（含 pgvector）----------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: tripmind-postgres
+    environment:
+      POSTGRES_USER: travel_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travel_agent_pass}
+      POSTGRES_DB: travel_agent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 首次启动自动执行建表脚本
+      - ./backend/scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql:ro
+    ports:
+      - "5432:5432"      # 可选：暴露端口方便本地连库调试
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U travel_agent -d travel_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------- Redis ----------
+  redis:
+    image: redis:7-alpine
+    container_name: tripmind-redis
+    ports:
+      - "6379:6379"      # 可选：暴露端口方便调试
+    restart: unless-stopped
+
+# 数据卷：PostgreSQL 数据持久化，容器重建不丢数据
+volumes:
+  pgdata:

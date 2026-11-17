@@ -1,0 +1,9 @@
+# ===== 后端镜像构建时排除的文件 =====
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+.env
+.env.*
+!.env.example
