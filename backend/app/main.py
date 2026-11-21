@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import health, history, plan
+from app.agents import init_checkpointing
 from app.db import close_pool, init_pool
 from app.observability import setup_observability
 
@@ -16,8 +17,9 @@ setup_observability()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时初始化数据库连接池，关闭时释放。"""
+    """应用生命周期：启动时初始化数据库连接池和 Redis checkpointer，关闭时释放。"""
     await init_pool()
+    await init_checkpointing()
     yield
     await close_pool()
 

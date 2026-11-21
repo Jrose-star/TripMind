@@ -17,7 +17,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from langgraph.types import Command
 
-from app.agents import app_graph, planning_graph
+from app import agents
 from app.agents.nodes.guide_write import astream_guide
 from app.agents.state import AgentState
 from app.db import storage
@@ -109,7 +109,7 @@ async def create_plan(req: PlanRequest):
     thread_id = req.thread_id or uuid.uuid4().hex
     initial_state = AgentState(user_input=req.user_input)
 
-    result = app_graph.invoke(
+    result = agents.app_graph.invoke(
         initial_state.model_dump(),
         config={
             "configurable": {"thread_id": thread_id},
@@ -140,7 +140,7 @@ async def create_plan(req: PlanRequest):
 @router.post("/plan/{thread_id}/resume", response_model=PlanResponse)
 async def resume_plan(thread_id: str, req: ResumeRequest):
     """用户回答追问后，恢复执行。"""
-    result = app_graph.invoke(
+    result = agents.app_graph.invoke(
         Command(resume=req.answer),
         config={
             "configurable": {"thread_id": thread_id},
@@ -186,7 +186,7 @@ async def create_plan_stream(req: PlanRequest):
             # 注意：astream 的每个 chunk 是「单节点增量更新」，不是完整状态，
             # 所以需要手动累积各节点的更新，最后合并成完整 state。
             accumulated: dict = {}
-            async for chunk in planning_graph.astream(
+            async for chunk in agents.planning_graph.astream(
                 initial_state.model_dump(),
                 config={
                     "configurable": {"thread_id": thread_id},
@@ -246,7 +246,7 @@ async def resume_plan_stream(thread_id: str, req: ResumeRequest):
 
         try:
             accumulated: dict = {}
-            async for chunk in planning_graph.astream(
+            async for chunk in agents.planning_graph.astream(
                 Command(resume=req.answer),
                 config={
                     "configurable": {"thread_id": thread_id},

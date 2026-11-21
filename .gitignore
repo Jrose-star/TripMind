@@ -14,3 +14,6 @@ dist/
 # uv
 .python-version
 uv.lock
+
+# WorkBuddy 工作区数据
+.workbuddy/

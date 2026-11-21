@@ -7,25 +7,42 @@ const EXAMPLE_TEMPLATES = [
   { label: '北京 4 日', text: '北京4天，预算5000，带父母，想去故宫长城' },
 ]
 
+// 消息类型：user = 用户，agent = Agent 回复
+// agent 消息可能包含：正文文本、追问问题、步骤进度、攻略 markdown
 function App() {
+  const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
-  const [result, setResult] = useState('')
-  const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
-  const [question, setQuestion] = useState('')
   const [threadId, setThreadId] = useState('')
-  const [answer, setAnswer] = useState('')
-  const [history, setHistory] = useState([])
   const [showHistory, setShowHistory] = useState(false)
-  const [steps, setSteps] = useState([]) // 执行步骤进度
-  const resultRef = useRef(null)
+  const [history, setHistory] = useState([])
 
-  // 攻略输出时自动滚动到底部
+  const listRef = useRef(null)
+  const inputRef = useRef(null)
+
+  // 消息列表变化时自动滚动到底部
   useEffect(() => {
-    if (resultRef.current) {
-      resultRef.current.scrollTop = resultRef.current.scrollHeight
+    if (listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight
     }
-  }, [result])
+  }, [messages])
+
+  // 追加/更新一条消息（返回新消息 id，供流式更新使用）
+  const pushMessage = (msg) => {
+    let id
+    setMessages((prev) => {
+      id = prev.length
+      return [...prev, msg]
+    })
+    return id
+  }
+
+  // 更新某条消息的字段（用于流式追加 token、更新状态等）
+  const patchMessage = (id, patch) => {
+    setMessages((prev) =>
+      prev.map((m, i) => (i === id ? { ...m, ...patch } : m)),
+    )
+  }
 
   // 加载历史会话列表
   const loadHistory = async () => {
@@ -35,79 +52,98 @@ function App() {
       setHistory(data.items || [])
       setShowHistory(true)
     } catch (e) {
-      setStatus('加载历史失败：' + e.message)
+      pushMessage({ role: 'agent', text: '加载历史失败：' + e.message })
     }
   }
 
   // 查看某次历史会话的完整攻略
   const viewHistory = async (tid) => {
-    setStatus('正在加载历史攻略…')
     try {
       const res = await fetch(`/api/plan/${tid}`)
       if (!res.ok) throw new Error('未找到该会话')
       const data = await res.json()
-      setResult(data.guide_markdown || '（该会话无攻略内容）')
-      setThreadId(tid)
-      setStatus('已加载历史攻略')
       setShowHistory(false)
+      setMessages((prev) => [
+        ...prev,
+        { role: 'user', text: data.user_input || '（历史会话）' },
+        { role: 'agent', text: data.guide_markdown || '（该会话无攻略内容）', kind: 'guide' },
+      ])
     } catch (e) {
-      setStatus('加载失败：' + e.message)
+      pushMessage({ role: 'agent', text: '加载失败：' + e.message })
     }
   }
 
-  // 复用历史需求：把历史输入回填到输入框
+  // 复用历史需求：回填到输入框
   const reuseHistory = (userInput) => {
     setInput(userInput)
     setShowHistory(false)
-    setResult('')
-    setStatus('已回填历史需求，可修改后重新规划')
+    inputRef.current?.focus()
   }
 
-  // 首次发起规划
-  const handlePlan = async () => {
-    if (!input.trim()) return
+  // 发起一次规划（首次）
+  const handlePlan = async (text) => {
+    const content = (text ?? input).trim()
+    if (!content || loading) return
     setLoading(true)
-    setResult('')
-    setQuestion('')
-    setSteps([])
-    setStatus('正在连接…')
+
+    // 用户消息上屏
+    pushMessage({ role: 'user', text: content })
+    setInput('')
+
+    // Agent 占位消息，用于流式填充
+    const agentId = pushMessage({
+      role: 'agent',
+      text: '',
+      status: '正在连接…',
+      kind: 'thinking',
+    })
 
     try {
       const res = await fetch('/api/plan/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_input: input }),
+        body: JSON.stringify({ user_input: content, thread_id: threadId || undefined }),
       })
-      await processStream(res)
+      await processStream(res, agentId)
     } catch (e) {
-      setStatus('请求失败：' + e.message)
+      patchMessage(agentId, { status: '', text: '请求失败：' + e.message, kind: 'error' })
     } finally {
       setLoading(false)
     }
   }
 
   // 回答追问后恢复
-  const handleResume = async () => {
-    if (!answer.trim() || !threadId) return
+  const handleResume = async (text) => {
+    const content = (text ?? input).trim()
+    if (!content || loading || !threadId) return
     setLoading(true)
-    setStatus('正在继续规划…')
+
+    pushMessage({ role: 'user', text: content })
+    setInput('')
+
+    const agentId = pushMessage({
+      role: 'agent',
+      text: '',
+      status: '正在继续规划…',
+      kind: 'thinking',
+    })
 
     try {
       const res = await fetch(`/api/plan/${threadId}/resume/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ answer }),
+        body: JSON.stringify({ answer: content }),
       })
-      await processStream(res)
+      await processStream(res, agentId)
     } catch (e) {
-      setStatus('请求失败：' + e.message)
+      patchMessage(agentId, { status: '', text: '请求失败：' + e.message, kind: 'error' })
     } finally {
       setLoading(false)
     }
   }
 
   // 处理 SSE 流
-  const processStream = async (res) => {
+  const processStream = async (res, agentId) => {
     if (!res.body) throw new Error('浏览器不支持流式读取')
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
@@ -125,7 +161,7 @@ function App() {
         if (!line.startsWith('data:')) continue
         const jsonStr = line.slice(5).trim()
         try {
-          handleMessage(JSON.parse(jsonStr))
+          handleMessage(JSON.parse(jsonStr), agentId)
         } catch (e) {
           // 忽略解析失败
         }
@@ -133,69 +169,72 @@ function App() {
     }
   }
 
-  const handleMessage = (msg) => {
+  const handleMessage = (msg, agentId) => {
     switch (msg.type) {
       case 'start':
         setThreadId(msg.thread_id)
         break
       case 'status':
-        setStatus(msg.message)
-        // 根据状态文字推断当前步骤
-        updateStep(msg.message)
+        patchMessage(agentId, { status: msg.message })
         break
       case 'clarify':
-        setQuestion(msg.question)
-        setAnswer('')
-        setStatus('')
+        patchMessage(agentId, {
+          status: '',
+          text: msg.question,
+          kind: 'clarify',
+        })
         break
       case 'guide_start':
-        setResult('')
+        patchMessage(agentId, { text: '', kind: 'guide' })
         break
       case 'guide_token':
-        setResult((prev) => prev + msg.token)
+        patchMessage(agentId, {
+          text: (prev) => prev + msg.token,
+        })
         break
       case 'done':
         if (msg.guide_markdown) {
-          setResult(msg.guide_markdown)
-        } else if (!result) {
-          setResult('（未生成内容）')
+          patchMessage(agentId, {
+            text: msg.guide_markdown,
+            kind: 'guide',
+            status: '',
+          })
         }
-        setStatus('完成')
-        setQuestion('')
         break
       case 'error':
-        setStatus('出错：' + msg.message)
+        patchMessage(agentId, { status: '', text: '出错：' + msg.message, kind: 'error' })
         break
       default:
         break
     }
   }
 
-  // 将后端状态信息映射为可读的步骤进度
-  const updateStep = (message) => {
-    const mapping = [
-      { key: '解析需求', pattern: /解析|需求|理解/ },
-      { key: '检索地点', pattern: /检索|POI|地点|搜索/ },
-      { key: '查询天气', pattern: /天气/ },
-      { key: '生成攻略', pattern: /攻略|生成|规划|撰写/ },
-    ]
-    for (const m of mapping) {
-      if (m.pattern.test(message)) {
-        setSteps((prev) => {
-          if (prev.some((s) => s.key === m.key)) return prev
-          return [...prev, { key: m.key, done: false }]
-        })
-      }
+  // 提交输入：有追问进行中则 resume，否则新发起
+  const onSubmit = () => {
+    const content = input.trim()
+    if (!content || loading) return
+    // 判断是否有未完成的追问（最后一条 agent 消息是 clarify 类型）
+    const last = messages[messages.length - 1]
+    if (last && last.role === 'agent' && last.kind === 'clarify') {
+      handleResume(content)
+    } else {
+      handlePlan(content)
     }
   }
 
-  // 快捷模板点击
   const pickTemplate = (text) => {
     setInput(text)
+    inputRef.current?.focus()
+  }
+
+  const startNewChat = () => {
+    setMessages([])
+    setThreadId('')
+    setInput('')
   }
 
   return (
-    <div className="app">
+    <div className="chat-app">
       <header className="topbar">
         <div className="brand">
           <span className="brand-logo">🧳</span>
@@ -204,107 +243,100 @@ function App() {
             <div className="brand-sub">LangGraph · FastAPI · MCP</div>
           </div>
         </div>
-        <button className="ghost-btn" onClick={loadHistory} disabled={loading}>
-          🕘 历史记录
-        </button>
+        <div className="topbar-actions">
+          <button className="ghost-btn" onClick={startNewChat} disabled={loading}>
+            ✚ 新对话
+          </button>
+          <button className="ghost-btn" onClick={loadHistory} disabled={loading}>
+            🕘 历史记录
+          </button>
+        </div>
       </header>
 
-      <main className="main">
-        {/* 输入卡片 */}
-        <section className="input-card">
-          <h2 className="card-title">想去哪儿？</h2>
+      <main className="chat-main">
+        {/* 消息列表 */}
+        <div className="msg-list" ref={listRef}>
+          {messages.length === 0 ? (
+            <div className="welcome">
+              <div className="welcome-logo">🧳</div>
+              <h2>想去哪儿？</h2>
+              <p>告诉我目的地、天数和预算，我来帮你规划行程</p>
+              <div className="templates">
+                {EXAMPLE_TEMPLATES.map((t) => (
+                  <button
+                    key={t.label}
+                    className="chip"
+                    onClick={() => pickTemplate(t.text)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            messages.map((m, i) => (
+              <div key={i} className={`msg-row ${m.role}`}>
+                <div className={`avatar ${m.role}`}>
+                  {m.role === 'user' ? '🙂' : '🧳'}
+                </div>
+                <div className={`bubble ${m.role} ${m.kind || ''}`}>
+                  {m.status && <div className="bubble-status">{m.status}</div>}
+                  {m.text && m.kind === 'guide' ? (
+                    <div className="markdown">
+                      <ReactMarkdown>{m.text}</ReactMarkdown>
+                    </div>
+                  ) : m.text ? (
+                    <div className="bubble-text">{m.text}</div>
+                  ) : (
+                    !m.status && <div className="typing"><span /><span /><span /></div>
+                  )}
+                  {m.kind === 'guide' && m.text && (
+                    <div className="bubble-actions">
+                      <button
+                        className="mini-btn ghost"
+                        onClick={() => {
+                          const blob = new Blob([m.text], { type: 'text/markdown' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = '旅行攻略.md'
+                          a.click()
+                          URL.revokeObjectURL(url)
+                        }}
+                      >
+                        ⬇ 导出
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* 输入区 */}
+        <div className="input-bar">
           <textarea
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="例如：武汉出发，3天，预算3000，想看江景和历史景点"
-            rows={3}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                onSubmit()
+              }
+            }}
+            placeholder="输入旅行需求，例如：武汉出发，3天，预算3000…（Enter 发送，Shift+Enter 换行）"
+            rows={1}
           />
-          <div className="templates">
-            {EXAMPLE_TEMPLATES.map((t) => (
-              <button
-                key={t.label}
-                className="chip"
-                onClick={() => pickTemplate(t.text)}
-                disabled={loading}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          <div className="input-actions">
-            <button className="primary-btn" onClick={handlePlan} disabled={loading}>
-              {loading ? '规划中…' : '✨ 开始规划'}
-            </button>
-            {input && (
-              <button className="ghost-btn" onClick={() => setInput('')} disabled={loading}>
-                清空
-              </button>
-            )}
-          </div>
-        </section>
-
-        {/* 状态提示 */}
-        {status && (
-          <div className={`status ${status === '完成' ? 'status-ok' : ''}`}>
-            {loading && <span className="spinner" />}
-            {status}
-          </div>
-        )}
-
-        {/* 步骤进度 */}
-        {steps.length > 0 && loading && (
-          <div className="steps">
-            {steps.map((s, i) => (
-              <span key={s.key} className="step-chip">
-                <span className="step-dot" />
-                {s.key}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* 追问框 */}
-        {question && (
-          <div className="clarify-box">
-            <p className="clarify-q">🤔 {question}</p>
-            <input
-              type="text"
-              value={answer}
-              onChange={(e) => setAnswer(e.target.value)}
-              placeholder="请输入你的回答，例如：去成都，玩3天，预算2000"
-              onKeyDown={(e) => e.key === 'Enter' && handleResume()}
-            />
-            <button className="primary-btn" onClick={handleResume} disabled={loading}>
-              {loading ? '继续规划中…' : '提交回答'}
-            </button>
-          </div>
-        )}
-
-        {/* 攻略结果 */}
-        {result && (
-          <section className="result-card">
-            <div className="result-header">
-              <span className="result-title">📄 旅行攻略</span>
-              <button
-                className="ghost-btn"
-                onClick={() => {
-                  const blob = new Blob([result], { type: 'text/markdown' })
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = '旅行攻略.md'
-                  a.click()
-                  URL.revokeObjectURL(url)
-                }}
-              >
-                ⬇ 导出
-              </button>
-            </div>
-            <div className="result-body" ref={resultRef}>
-              <ReactMarkdown>{result}</ReactMarkdown>
-            </div>
-          </section>
-        )}
+          <button
+            className="primary-btn send-btn"
+            onClick={onSubmit}
+            disabled={loading || !input.trim()}
+          >
+            {loading ? '…' : '发送'}
+          </button>
+        </div>
       </main>
 
       {/* 历史记录侧边栏 */}

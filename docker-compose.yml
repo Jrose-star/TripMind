@@ -60,13 +60,18 @@ services:
     restart: unless-stopped
 
   # ---------- Redis ----------
+  # 用 redis-stack-server：内置 RediSearch + RedisJSON，
+  # 满足 langgraph-checkpoint-redis 持久化所需模块
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack-server:7.4.0-v0
     container_name: tripmind-redis
     ports:
       - "6379:6379"      # 可选：暴露端口方便调试
+    volumes:
+      - redisdata:/data  # 持久化 Redis 数据（checkpoint 状态不随容器删除丢失）
     restart: unless-stopped
 
 # 数据卷：PostgreSQL 数据持久化，容器重建不丢数据
 volumes:
   pgdata:
+  redisdata:

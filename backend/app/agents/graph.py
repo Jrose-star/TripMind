@@ -4,9 +4,8 @@
 """
 
 from langgraph.graph import END, StateGraph
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
+from app.agents.checkpointer import CUSTOM_SERDE, _memory_checkpointer
 from app.agents.nodes.budget_check import budget_check
 from app.agents.nodes.clarify import clarify
 from app.agents.nodes.guide_write import guide_write
@@ -14,28 +13,7 @@ from app.agents.nodes.intent_parse import intent_parse
 from app.agents.nodes.itinerary_plan import itinerary_plan
 from app.agents.nodes.poi_search import poi_search
 from app.agents.nodes.weather import weather_search
-from app.agents.state import (
-    AgentState,
-    TravelRequirement,
-    POI,
-    DayPlan,
-    BudgetResult,
-    WeatherInfo,
-    WeatherCast,
-)
-
-# 自定义序列化白名单：让 checkpointer 能安全地序列化/反序列化我们的 Pydantic 类型，
-# 消除 "Deserializing unregistered type" 警告。
-_CUSTOM_SERDE = JsonPlusSerializer(
-    allowed_msgpack_modules=[
-        ("app.agents.state", "TravelRequirement"),
-        ("app.agents.state", "POI"),
-        ("app.agents.state", "DayPlan"),
-        ("app.agents.state", "BudgetResult"),
-        ("app.agents.state", "WeatherInfo"),
-        ("app.agents.state", "WeatherCast"),
-    ]
-)
+from app.agents.state import AgentState
 
 # 最多追问次数，超过则强制用已有信息继续规划，避免 clarify↔intent_parse 死循环
 MAX_CLARIFY_ROUNDS = 3
@@ -65,8 +43,11 @@ def route_after_budget(state: AgentState) -> str:
     return "guide_write"
 
 
-def build_graph():
-    """构建并编译旅行规划 Agent 状态图。"""
+def build_graph(checkpointer=None):
+    """构建并编译旅行规划 Agent 状态图。
+
+    checkpointer：可选，传入持久化 checkpointer（如 Redis）。默认内存。
+    """
     graph = StateGraph(AgentState)
 
     # 添加节点
@@ -99,13 +80,13 @@ def build_graph():
     )
     graph.add_edge("guide_write", END)
 
-    # 用内存 checkpointer 支持中断/恢复（多轮追问）
-    # 传入自定义 serde，让自定义 Pydantic 类型能被安全序列化，消除警告
-    checkpointer = MemorySaver(serde=_CUSTOM_SERDE)
+    # 用 checkpointer 支持中断/恢复（多轮追问）
+    # 默认内存（重启丢失）；传入 Redis checkpointer 则可持久化
+    checkpointer = checkpointer or _memory_checkpointer()
     return graph.compile(checkpointer=checkpointer)
 
 
-def build_planning_graph():
+def build_planning_graph(checkpointer=None):
     """构建"规划图"（不含攻略写作节点）。
 
     供 SSE 流式接口使用：先跑到 budget_check 产出结构化数据，
@@ -133,11 +114,12 @@ def build_planning_graph():
     graph.add_edge("itinerary_plan", "budget_check")
     graph.add_edge("budget_check", END)
 
-    checkpointer = MemorySaver(serde=_CUSTOM_SERDE)
+    checkpointer = checkpointer or _memory_checkpointer()
     return graph.compile(checkpointer=checkpointer)
 
 
-# 供 API 层使用的编译实例
+# 供 API 层使用的编译实例（默认内存 checkpointer）
+# 应用启动时（main.py lifespan）若配置了 Redis，会重新编译为 Redis 版本
 app_graph = build_graph()
 # 供流式接口使用的"规划图"（不含攻略写作，攻略由 API 层流式生成）
 planning_graph = build_planning_graph()
